@@ -1,0 +1,370 @@
+"""
+model_training.py - Train food classification model using transfer learning
+"""
+
+import os
+import json
+import numpy as np
+import pandas as pd
+from pathlib import Path
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.applications import MobileNetV2, EfficientNetB0
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+import matplotlib.pyplot as plt
+from datetime import datetime
+
+class FoodClassifierTrainer:
+    def __init__(self, model_name="MobileNetV2", num_classes=10):
+        """
+        Initialize the food classifier trainer
+        Args:
+            model_name: Base model for transfer learning (MobileNetV2/EfficientNetB0)
+            num_classes: Number of food classes
+        """
+        self.model_name = model_name
+        self.num_classes = num_classes
+        self.img_size = (224, 224)
+        self.model = None
+        self.history = None
+        
+        # Create model directory
+        self.model_dir = Path("models/saved_models")
+        self.checkpoint_dir = Path("models/checkpoints")
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        
+    def create_model(self):
+        """Create transfer learning model"""
+        print(f"\n🏗️ Building {self.model_name} model...")
+        
+        # Input layer
+        inputs = keras.Input(shape=(*self.img_size, 3))
+        
+        # Data preprocessing
+        x = keras.applications.mobilenet_v2.preprocess_input(inputs)
+        
+        # Load pretrained base model
+        if self.model_name == "MobileNetV2":
+            base_model = MobileNetV2(
+                input_shape=(*self.img_size, 3),
+                include_top=False,
+                weights='imagenet'
+            )
+            base_model.trainable = False  # Freeze base model initially
+            
+        elif self.model_name == "EfficientNetB0":
+            base_model = EfficientNetB0(
+                input_shape=(*self.img_size, 3),
+                include_top=False,
+                weights='imagenet'
+            )
+            base_model.trainable = False
+        
+        # Add base model
+        x = base_model(x, training=False)
+        
+        # Add custom classification head
+        x = layers.GlobalAveragePooling2D()(x)
+        x = layers.Dense(256, activation='relu')(x)
+        x = layers.Dropout(0.5)(x)
+        x = layers.Dense(128, activation='relu')(x)
+        x = layers.Dropout(0.3)(x)
+        
+        # Output layer
+        outputs = layers.Dense(self.num_classes, activation='softmax')(x)
+        
+        # Create model
+        self.model = keras.Model(inputs, outputs)
+        
+        # Store base model reference for fine-tuning
+        self.base_model = base_model
+        
+        print(f"✅ Model created with {self.model.count_params():,} parameters")
+        print(f"   - Trainable: {sum([tf.size(w).numpy() for w in self.model.trainable_weights]):,}")
+        print(f"   - Non-trainable: {sum([tf.size(w).numpy() for w in self.model.non_trainable_weights]):,}")
+        
+        return self.model
+    
+    def compile_model(self, learning_rate=0.001):
+        """Compile the model with optimizer and loss"""
+        print(f"\n⚙️ Compiling model with learning rate: {learning_rate}")
+        
+        self.model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+            loss='categorical_crossentropy',
+            metrics=['accuracy', keras.metrics.TopKCategoricalAccuracy(k=3, name='top3_acc')]
+        )
+        
+        print("✅ Model compiled successfully")
+    
+    def train_initial(self, train_ds, val_ds, epochs=10):
+        """Initial training with frozen base model"""
+        print("\n🎯 Phase 1: Training with frozen base model...")
+        
+        # Callbacks
+        callbacks = self._get_callbacks("initial")
+        
+        # Train model
+        self.history = self.model.fit(
+            train_ds,
+            epochs=epochs,
+            validation_data=val_ds,
+            callbacks=callbacks,
+            verbose=1
+        )
+        
+        print("✅ Initial training complete!")
+        return self.history
+    
+    def fine_tune(self, train_ds, val_ds, epochs=10, unfreeze_layers=20):
+        """Fine-tune the model by unfreezing some base layers"""
+        print(f"\n🎯 Phase 2: Fine-tuning last {unfreeze_layers} layers...")
+        
+        # Unfreeze the top layers of base model
+        self.base_model.trainable = True
+        
+        # Freeze all layers except last 'unfreeze_layers'
+        for layer in self.base_model.layers[:-unfreeze_layers]:
+            layer.trainable = False
+            
+        # Recompile with lower learning rate
+        self.compile_model(learning_rate=0.0001)
+        
+        print(f"✅ Unfroze {unfreeze_layers} layers for fine-tuning")
+        print(f"   - Trainable parameters: {sum([tf.size(w).numpy() for w in self.model.trainable_weights]):,}")
+        
+        # Callbacks
+        callbacks = self._get_callbacks("finetune")
+        
+        # Continue training
+        history_fine = self.model.fit(
+            train_ds,
+            epochs=epochs,
+            validation_data=val_ds,
+            callbacks=callbacks,
+            verbose=1,
+            initial_epoch=self.history.epoch[-1] if self.history else 0
+        )
+        
+        # Combine histories
+        if self.history:
+            for key in history_fine.history:
+                self.history.history[key].extend(history_fine.history[key])
+        else:
+            self.history = history_fine
+            
+        print("✅ Fine-tuning complete!")
+        return self.history
+    
+    def _get_callbacks(self, phase="initial"):
+        """Get training callbacks"""
+        callbacks = []
+        
+        # Model checkpoint
+        checkpoint_path = self.checkpoint_dir / f"best_model_{phase}.h5"
+        callbacks.append(ModelCheckpoint(
+            filepath=str(checkpoint_path),
+            monitor='val_accuracy',
+            save_best_only=True,
+            save_weights_only=False,
+            mode='max',
+            verbose=1
+        ))
+        
+        # Early stopping
+        callbacks.append(EarlyStopping(
+            monitor='val_loss',
+            patience=5,
+            restore_best_weights=True,
+            verbose=1
+        ))
+        
+        # Learning rate reduction
+        callbacks.append(ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=3,
+            min_lr=0.00001,
+            verbose=1
+        ))
+        
+        return callbacks
+    
+    def save_model(self, model_name=None):
+        """Save the trained model"""
+        if model_name is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_name = f"food_classifier_{self.model_name}_{timestamp}"
+        
+        # Save in multiple formats
+        # 1. SavedModel format (recommended)
+        model_path = self.model_dir / model_name
+        self.model.save(model_path)
+        print(f"✅ Model saved in SavedModel format: {model_path}")
+        
+        # 2. H5 format (legacy)
+        h5_path = self.model_dir / f"{model_name}.h5"
+        self.model.save(h5_path)
+        print(f"✅ Model saved in H5 format: {h5_path}")
+        
+        # 3. TFLite format (for mobile)
+        tflite_path = self.model_dir / f"{model_name}.tflite"
+        converter = tf.lite.TFLiteConverter.from_keras_model(self.model)
+        tflite_model = converter.convert()
+        with open(tflite_path, 'wb') as f:
+            f.write(tflite_model)
+        print(f"✅ Model saved in TFLite format: {tflite_path}")
+        
+        return str(model_path)
+    
+    def plot_training_history(self):
+        """Plot training and validation metrics"""
+        if not self.history:
+            print("⚠️ No training history to plot")
+            return
+        
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+        
+        # Plot accuracy
+        axes[0].plot(self.history.history['accuracy'], label='Train Accuracy')
+        axes[0].plot(self.history.history['val_accuracy'], label='Val Accuracy')
+        axes[0].set_title('Model Accuracy')
+        axes[0].set_xlabel('Epoch')
+        axes[0].set_ylabel('Accuracy')
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
+        
+        # Plot loss
+        axes[1].plot(self.history.history['loss'], label='Train Loss')
+        axes[1].plot(self.history.history['val_loss'], label='Val Loss')
+        axes[1].set_title('Model Loss')
+        axes[1].set_xlabel('Epoch')
+        axes[1].set_ylabel('Loss')
+        axes[1].legend()
+        axes[1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('models/training_history.png', dpi=100)
+        plt.show()
+        print("📊 Training history plot saved to models/training_history.png")
+    
+    def evaluate_model(self, test_ds):
+        """Evaluate model on test dataset"""
+        print("\n📈 Evaluating model...")
+        results = self.model.evaluate(test_ds, verbose=1)
+        
+        print("\n📊 Evaluation Results:")
+        for metric_name, value in zip(self.model.metrics_names, results):
+            print(f"   {metric_name}: {value:.4f}")
+        
+        return results
+
+def train_food_classifier():
+    """Main training function"""
+    print("🍔 Food Classifier Training Pipeline 🍔\n")
+    
+    # Import data preparation
+    from data_preparation import FoodDatasetPreparator
+    
+    # Step 1: Prepare data
+    print("="*50)
+    print("STEP 1: Preparing Dataset")
+    print("="*50)
+    
+    preparator = FoodDatasetPreparator(num_classes=10)
+    
+    # Check if data exists, if not create sample data
+    if not (Path("data/processed/train").exists()):
+        print("⚠️ No data found. Creating sample dataset...")
+        preparator.download_sample_dataset()
+    
+    # Load datasets
+    train_ds, val_ds, class_names = preparator.prepare_tensorflow_dataset(
+        batch_size=32,
+        img_size=(224, 224)
+    )
+    
+    # Save class names
+    Path("resources").mkdir(exist_ok=True)
+    with open("resources/class_names.json", "w") as f:
+        json.dump(class_names, f, indent=2)
+    print(f"✅ Saved {len(class_names)} class names to resources/class_names.json")
+    
+    # Step 2: Create and train model
+    print("\n" + "="*50)
+    print("STEP 2: Creating Model")
+    print("="*50)
+    
+    trainer = FoodClassifierTrainer(
+        model_name="MobileNetV2",  # Fast and efficient
+        num_classes=len(class_names)
+    )
+    
+    # Create model
+    model = trainer.create_model()
+    
+    # Compile model
+    trainer.compile_model(learning_rate=0.001)
+    
+    # Step 3: Initial training
+    print("\n" + "="*50)
+    print("STEP 3: Training Model (Phase 1)")
+    print("="*50)
+    
+    history = trainer.train_initial(
+        train_ds,
+        val_ds,
+        epochs=5  # Quick training for demo
+    )
+    
+    # Step 4: Fine-tuning (optional for better accuracy)
+    print("\n" + "="*50)
+    print("STEP 4: Fine-tuning Model (Phase 2)")
+    print("="*50)
+    
+    response = input("Do you want to fine-tune the model for better accuracy? (y/n): ")
+    if response.lower() == 'y':
+        trainer.fine_tune(
+            train_ds,
+            val_ds,
+            epochs=5,
+            unfreeze_layers=20
+        )
+    
+    # Step 5: Save model
+    print("\n" + "="*50)
+    print("STEP 5: Saving Model")
+    print("="*50)
+    
+    model_path = trainer.save_model("food_classifier_model")
+    
+    # Step 6: Plot results
+    print("\n" + "="*50)
+    print("STEP 6: Generating Training Report")
+    print("="*50)
+    
+    trainer.plot_training_history()
+    
+    # Final evaluation
+    print("\n📊 Final Model Performance:")
+    trainer.evaluate_model(val_ds)
+    
+    print("\n" + "="*50)
+    print("🎉 TRAINING COMPLETE! 🎉")
+    print("="*50)
+    print(f"\n✅ Model saved to: {model_path}")
+    print("✅ Class names saved to: resources/class_names.json")
+    print("✅ Training history saved to: models/training_history.png")
+    
+    return model_path, class_names
+
+if __name__ == "__main__":
+    # Run training pipeline
+    model_path, class_names = train_food_classifier()
+    
+    print("\n📝 Next Steps:")
+    print("1. Run prediction.py to test the model")
+    print("2. Run 'streamlit run app.py' to launch the web app")
+    print("3. Upload food images to get calorie estimates!")
