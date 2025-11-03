@@ -1,0 +1,42 @@
+food_name,serving_size,calories,protein_g,carbs_g,fat_g,category
+apple_pie,1 slice,257,4,38,10,Dessert
+baby_back_ribs,1 piece,542,48,0,37,Protein
+baklava,1 slice,257,4,38,10,Dessert
+beef_carpaccio,1 piece,542,48,0,37,Protein
+beef_tartare,1 piece,542,48,0,37,Protein
+beet_salad,1 bowl,152,5,11,10,Healthy
+beignets,1 donut,253,4,27,14,Dessert
+bibimbap,1 bowl,206,4,45,0,Staple
+bread_pudding,1 slice,257,4,38,10,Dessert
+breakfast_burrito,1 sandwich,256,12,33,9,Lunch
+bruschetta,2 slices,160,6,28,2,Bakery
+caesar_salad,1 bowl,152,5,11,10,Healthy
+cannoli,1 slice,257,4,38,10,Dessert
+caprese_salad,1 bowl,152,5,11,10,Healthy
+carrot_cake,1 slice,257,4,38,10,Dessert
+ceviche,1 bowl,152,5,11,10,Healthy
+cheesecake,1 slice,257,4,38,10,Dessert
+cheese_plate,1 sandwich,256,12,33,9,Lunch
+chicken_curry,1 bowl,206,4,45,0,Staple
+chicken_quesadilla,2 tacos,410,20,34,22,Mexican
+hamburger,1 burger,354,17,29,20,Fast Food
+hot_dog,1 hotdog,290,11,24,18,Fast Food
+french_fries,1 medium,365,4,63,17,Fast Food
+ice_cream,1 cup,273,5,31,14,Dessert
+pizza,1 slice,285,12,36,10,Fast Food
+ramen,1 bowl,436,10,60,15,Asian
+sushi,8 pieces,280,11,38,7,Japanese
+salad,1 bowl,152,5,11,10,Healthy
+steak,1 piece,542,48,0,37,Protein
+chicken_wings,6 pieces,441,35,0,31,Protein
+tacos,2 tacos,410,20,34,22,Mexican
+waffles,2 waffles,290,7,32,14,Breakfast
+pancakes,3 pancakes,320,6,52,8,Breakfast
+bread,2 slices,160,6,28,2,Bakery
+soup,1 bowl,120,5,18,3,Healthy
+rice,1 cup,206,4,45,0,Staple
+omelette,1 large,154,11,1,11,Breakfast
+noodles,1 bowl,300,9,54,6,Asian
+sandwich,1 sandwich,256,12,33,9,Lunch
+donuts,1 donut,253,4,27,14,Dessert
+cake,1 slice,257,4,38,10,Dessert
